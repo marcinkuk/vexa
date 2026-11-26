@@ -27,7 +27,7 @@ services:
     <<: *secrets
     # Pin IMAGE_TAG to a release (e.g. v0.12.29) so a re-deploy cannot silently
     # move to a new build.
-    image: vexaai/vexa-lite:${IMAGE_TAG:-v012}
+    image: vexaai/vexa-lite:${IMAGE_TAG:-v0.12.29}
     # Chromium's sandbox inside a meeting bot needs an unprivileged user
     # namespace, which Docker's default seccomp profile denies. Docker resolves
     # a seccomp path on the daemon, so it must be an absolute host path:
@@ -55,11 +55,11 @@ services:
           esac
         done
         export ADMIN_API_TOKEN="$$ADMIN_TOKEN"
-        exec /entrypoint.sh "$$0" "$$@"
-      - supervisord
-      - -n
-      - -c
-      - /run/vexa/supervisord.conf
+        # Images ≥ v0.13 run the entrypoint-rendered config; older ones run the
+        # shipped template directly. Pick whichever exists.
+        conf=/run/vexa/supervisord.conf
+        [ -f "$$conf" ] || conf=/etc/supervisor/conf.d/vexa.conf
+        exec /entrypoint.sh supervisord -n -c "$$conf"
     shm_size: 2g
     environment:
       DB_HOST: postgres
