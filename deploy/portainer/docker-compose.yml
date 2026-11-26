@@ -38,6 +38,9 @@ services:
       - seccomp=${SECCOMP_PROFILE:-unconfined}
     # env_file injects DB_PASSWORD / ADMIN_TOKEN / MINIO_* into the container;
     # refuse empty or repository-published values before anything starts.
+    # /bin/sh -c consumes CMD, so the Lite CMD is repeated here as the script's
+    # own args — /entrypoint.sh needs it both to render supervisord.conf and to
+    # exec it.
     entrypoint:
       - /bin/sh
       - -c
@@ -53,6 +56,10 @@ services:
         done
         export ADMIN_API_TOKEN="$$ADMIN_TOKEN"
         exec /entrypoint.sh "$$@"
+      - supervisord
+      - -n
+      - -c
+      - /run/vexa/supervisord.conf
     shm_size: 2g
     environment:
       DB_HOST: postgres
