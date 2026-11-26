@@ -95,6 +95,8 @@ services:
         condition: service_healthy
       storage-init:
         condition: service_completed_successfully
+      db-init:
+        condition: service_completed_successfully
 
   postgres:
     <<: *secrets
@@ -129,6 +131,25 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+
+  # initdb is skipped when the data volume already holds a cluster, so POSTGRES_DB
+  # would never be applied — one-shot psql creates the database if it is missing.
+  db-init:
+    <<: *secrets
+    image: postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        export PGPASSWORD="$$DB_PASSWORD" PGHOST=postgres PGUSER="$${DB_USER:-postgres}"
+        psql -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='${DB_NAME:-vexa}'" | grep -q 1 \
+          || psql -d postgres -c "CREATE DATABASE ${DB_NAME:-vexa}" \
+          || echo "database ${DB_NAME:-vexa} already present"
+    networks: [vexa]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   storage:
     <<: *secrets
