@@ -37,13 +37,20 @@ mint ADMIN_TOKEN 32
 mint MINIO_ACCESS_KEY 16
 mint MINIO_SECRET_KEY 32
 
+# Postgres client auth: bind-mounted as -c hba_file, so it also governs a data
+# volume whose cluster predates this stack (initdb is skipped then).
+if [ -f "$SRC_DIR/pg_hba.conf" ]; then cp "$SRC_DIR/pg_hba.conf" "$DIR/pg_hba.conf"; fi
+chmod 0644 "$DIR/pg_hba.conf" 2>/dev/null || true
+
 # Docker resolves a seccomp profile path on the daemon, so it must be an
 # absolute host path. Vendored copy ships in this directory.
-SRC=$(dirname "$0")/seccomp-userns.json
+SRC_DIR=$(dirname "$0")
+SRC=$SRC_DIR/seccomp-userns.json
 if [ -f "$SRC" ]; then cp "$SRC" "$PROFILE"; else curl -fsSL -o "$PROFILE" https://raw.githubusercontent.com/marcinkuk/vexa/main/deploy/portainer/seccomp-userns.json; fi
 chmod 0644 "$PROFILE"
 
 echo "done:"
 echo "  secrets  $SECRETS (0600)"
 echo "  seccomp  $PROFILE"
+echo "  pg_hba   $DIR/pg_hba.conf"
 echo "Portainer stack env should set: SECCOMP_PROFILE=$PROFILE"

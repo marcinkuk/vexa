@@ -112,7 +112,7 @@ services:
         export POSTGRES_PASSWORD="$$DB_PASSWORD"
         exec docker-entrypoint.sh "$$@"
       - --
-    command: ["postgres", "-c", "idle_in_transaction_session_timeout=60000"]
+    command: ["postgres", "-c", "idle_in_transaction_session_timeout=60000", "-c", "hba_file=/data/vexa/pg_hba.conf"]
     environment:
       POSTGRES_DB: ${DB_NAME:-vexa}
       POSTGRES_USER: ${DB_USER:-postgres}
@@ -120,6 +120,8 @@ services:
       PGTZ: UTC
     volumes:
       - vexa-pgdata:/var/lib/postgresql/data
+      # hba_file via bind, not init: a re-deploy keeps the volume and skips initdb.
+      - ${SECRETS_DIR:-/data/vexa}/pg_hba.conf:/data/vexa/pg_hba.conf:ro
     networks: [vexa]
     restart: unless-stopped
     healthcheck:
