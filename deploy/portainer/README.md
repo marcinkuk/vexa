@@ -1,82 +1,64 @@
-# deploy/portainer — Vexa Lite as a Portainer stack
+# deploy/portainer — Vexa Lite jako stack Portainer
 
-Portainer stack for a small single host (works on a 4 GB box with swap). It runs
-**Vexa Lite** — the whole control plane in one container — plus the Postgres and
-versitygw storage sidecars, mirroring `make -C deploy/lite up`. Lite runs meeting
-bots as in-container processes, so this stack needs no Docker socket and builds
-nothing from source.
+Stack dla małego hosta pojedynczego (działa na 4 GB z swapem). Uruchamia
+**Vexa Lite** — cały control-plane w jednym kontenerie — plus sidecary Postgres
+i versitygw (storage nagrań), odwzorowując `make -C deploy/lite up`. Lite
+uruchamia boty spotkań jako procesy w kontenerze, więc stack nie potrzebuje
+doksocka i nic nie buduje.
 
-For a bigger host, deploy the full compose stack (`deploy/compose`, the
-multi-service P4 stack) instead; this directory is the low-footprint path.
+Dla większego hosta: pełny stack compose (`deploy/compose`); ten katalog to
+ścieżka niskiego footprintu.
 
-## Git topology
+## Topologia Git (wzorzec taki jak oc8)
 
 ```
 Vexa-ai/vexa  (upstream)
-   └── fork: <you>/vexa  (origin)     ← Portainer deploys from here
+   └── fork: marcinkuk/vexa  (origin)   ← Portainer deployuje stąd
 ```
 
-The fork keeps the link to upstream. To pull upstream into the fork, press
-**Sync fork** on GitHub or run:
+Ten typ integracji nazywa się **git-based stack** (w UI Portainera:
+„Deploy a new stack → Repository”): Portainer klonuje repo do
+`/data/compose/<id>`, a aktualizacja to „Build the image again and re-deploy”
+(„Pull and re-deploy”) — API: `POST /api/stacks/<id>/update`.
+Fork z linkiem do upstream: synchronizacja „Sync fork” na GitHubie albo
+`git merge upstream/main` i `git push`.
 
-```bash
-git fetch upstream && git merge upstream/main && git push origin main
-```
+## Uruchomienie
 
-Portainer picks the change up on **Action → Pull and re-deploy**
-(API: `POST /api/stacks/<id>/update`).
-
-## Creating the stack in Portainer
-
-Environments → **Stacks** → **Deploy a new stack** →
-**Repository** (that's the "git-based stack" method).
-
-| Field | Value |
-|---|---|
-| Repository | `https://github.com/<you>/vexa.git` |
-| Reference | `main` (or a tag, e.g. `v0.12.29`) |
-| Compose Path | `deploy/portainer/docker-compose.yml` |
-
-Before the first deploy, add the stack's **Environment** variables (they are NOT
-committed — a re-scan overwrites files, never the stack env):
-
-```
-DB_PASSWORD=*** rand -hex 32>
-ADMIN_TOKEN=*** rand -hex 32>
-MINIO_ACCESS_KEY=*** rand -hex 16>
-MINIO_SECRET_KEY=*** rand -hex 32>
-IMAGE_TAG=v0.12.29
-VEXA_PUBLIC_API_URL=http://<host>:8056
-TERMINAL_PUBLIC_URL=http://<host>:3001
-```
-
-`stack.env.example` lists every supported key. Values published in the Vexa
-repository (`changeme`, `vexa-access-key`, …) are refused at boot by design.
+1. Na hoście (raz): `sh deploy/portainer/init-host.sh`
+   — tworzy `/opt/vexa/stack.secrets.env` (0600, wygenerowane hasła) i
+   `/opt/vexa/seccomp-userns.json`.
+2. W Portainerze: Environments → Stacks → Deploy a new stack → Repository:
+   - Repository: `https://github.com/marcinkuk/vexa.git`
+   - Reference: `refs/heads/main` (albo tag, np. `v0.12.29`)
+   - Compose Path: `deploy/portainer/docker-compose.yml`
+3. W zakładce Environment stacka ustaw zmienne z `stack.env.example`
+   (non-secret). Sekrety zostają w pliku hosta — `env_file` wskazuje je
+   w trakcie deployu; re-scan gita nadpisuje pliki projektowe, dlatego
+   sekrety NIGDY nie mogą leżeć w repo ani w bazie Portainera.
 
 ## Front doors
 
-| Port | What |
+| Port | Co |
 |---|---|
-| `8056` | gateway — the REST API (`/health`, `POST /bots`) |
-| `3001` | terminal — the web workbench |
-| `8100` | agent-api — the agent control plane |
+| `8056` | gateway — REST API (`/health`, `POST /bots`) |
+| `3001` | terminal — workbench WWW |
+| `8100` | agent-api — control plane agentów |
 
-Bind everything to loopback or a private interface with `BIND_ADDR=127.0.0.1`
-in the stack env; the gateway has no TLS.
+Bind na loopback/prywatny interfejs: `BIND_ADDR=127.0.0.1`; gateway nie ma TLS.
 
-## Transcription
+## Transkrypcja
 
-Without `TRANSCRIPTION_SERVICE_URL` bots join and record but produce no text
-(`POST /bots` answers 503 unless the spawn opts out). Point it at any
-OpenAI-compatible STT endpoint. The bundled `whisper` service
-(`COMPOSE_PROFILES=local-stt`) is a CPU smoke test only — its default model is
-English-only, so Polish meetings need a `whisper-large-v3` class endpoint
-(Groq, vLLM, or your own GPU container).
+Bez `TRANSCRIPTION_SERVICE_URL` boty dołączają i nagrywają, ale nie dają tekstu
+(`POST /bots` → 503, chyba że spawn wyłączy transkrypcję). Usług `whisper`
+(`COMPOSE_PROFILES=local-stt`) służy tylko do testów — domyślny model jest
+angielski; na spotkania po polsku potrzebny endpoint klasy `whisper-large-v3`
+(Groq, vLLM, własny kontener na GPU).
 
-## Volumes
+## Wolumeny
 
-| Volume | Content |
+| Wolumen | Zawartość |
 |---|---|
-| `<stack>_vexa-pgdata` | users, meetings, transcripts |
-| `<stack>_vexa-storagedata` | recordings, one plain file per object — back up with `rsync -aX` (xattrs carry S3 metadata) |
-| `<stack>_vexa-state` | minted secrets that must survive container replacement |
+| `vexa_vexa-pgdata` | użytkownicy, spotkania, transkrypty |
+| `vexa_vexa-storagedata` | nagrania — jeden plik na obiekt; backup `rsync -aX` (xattrs niosą metadane S3) |
+| `vexa_vexa-state` | wygenerowane sekrety przetrwalnikowe (key sign-in, self-host key) |

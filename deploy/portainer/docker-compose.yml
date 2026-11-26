@@ -3,73 +3,81 @@
 # Same three pieces as `make -C deploy/lite up`: the all-in-one control-plane
 # container, a Postgres sidecar, and the versitygw storage sidecar. Lite runs
 # meeting bots as in-container processes, so this stack needs no Docker socket
-# and builds nothing — the images come from Docker Hub.
+# and builds nothing — images come from Docker Hub.
 #
-# Secrets are NOT in this file and NOT in the git clone. Portainer deploys the
-# stack from the repository, so anything committed here gets overwritten by the
-# next re-scan. Put DB_PASSWORD, ADMIN_TOKEN and the MINIO_* pair in the stack's
-# Environment section in Portainer instead; compose interpolates those.
+# Secrets live in ONE host file, SECRETS_FILE (default
+# /opt/vexa/stack.secrets.env), created by `sh deploy/portainer/init-host.sh`.
+# Nothing secret is committed and nothing secret is kept in Portainer's
+# database: a git re-scan overwrites the stack's project directory, so a
+# committed secret would be both published and destroyed on the next update.
 #
 # Portainer sets COMPOSE_PROJECT_NAME from the stack name, so containers and
 # volumes are prefixed with it (vexa_vexa-lite-1, vexa_vexa-pgdata, ...).
 name: vexa
 
-x-vexa-env: &vexa-env
-  DB_HOST: postgres
-  DB_PORT: "5432"
-  DB_NAME: ${DB_NAME:-vexa}
-  DB_USER: ${DB_USER:-postgres}
-  DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required - set it in the Portainer stack environment}
-  ADMIN_TOKEN: ${ADMIN_TOKEN:?ADMIN_TOKEN is required - set it in the Portainer stack environment}
-  ADMIN_API_TOKEN: ${ADMIN_TOKEN}
-  RUNTIME_API_TOKEN: ${RUNTIME_API_TOKEN:-}
-  MINIO_ENDPOINT: storage:9000
-  MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required - set it in the Portainer stack environment}
-  MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required - set it in the Portainer stack environment}
-  MINIO_BUCKET: ${MINIO_BUCKET:-vexa}
-  MINIO_SECURE: "false"
-  TRANSCRIPTION_SERVICE_URL: ${TRANSCRIPTION_SERVICE_URL:-}
-  TRANSCRIPTION_SERVICE_TOKEN: ${TRANSCRIPTION_SERVICE_TOKEN:-}
-  TRANSCRIPTION_MODEL: ${TRANSCRIPTION_MODEL:-}
-  TRANSCRIBE_ENABLED: ${TRANSCRIBE_ENABLED:-}
-  RECORDING_ENABLED: ${RECORDING_ENABLED:-}
-  VEXA_PUBLIC_API_URL: ${VEXA_PUBLIC_API_URL:-http://localhost:8056}
-  TERMINAL_PUBLIC_URL: ${TERMINAL_PUBLIC_URL:-http://localhost:3001}
-  TZ: UTC
+x-secrets: &secrets
+  env_file:
+    - ${SECRETS_FILE:-/opt/vexa/stack.secrets.env}
 
 services:
   vexa-lite:
-    # Pin IMAGE_TAG to a release (e.g. v0.12.29) once the stack works, so a
-    # re-deploy cannot silently move to a new 0.12 build.
+    <<: *secrets
+    # Pin IMAGE_TAG to a release (e.g. v0.12.29) so a re-deploy cannot silently
+    # move to a new build.
     image: vexaai/vexa-lite:${IMAGE_TAG:-v012}
-    # Chromium's sandbox inside the bots needs an unprivileged user namespace,
-    # which Docker's default seccomp profile denies. Docker resolves a seccomp
-    # profile path on the DAEMON, so a path relative to this file cannot work —
-    # install the vendored copy to an absolute host path instead:
-    #   ./deploy/portainer/install-seccomp.sh
-    # then set SECCOMP_PROFILE in the stack env. Without it bots run with an
-    # unsandboxed browser (Lite logs that).
+    # Chromium's sandbox inside a meeting bot needs an unprivileged user
+    # namespace, which Docker's default seccomp profile denies. Docker resolves
+    # a seccomp path on the daemon, so it must be an absolute host path:
+    #   sh deploy/portainer/init-host.sh
+    # then SECCOMP_PROFILE in the Portainer stack env points at it. Without it
+    # bots run an unsandboxed browser (Lite logs that).
     security_opt:
       - seccomp=${SECCOMP_PROFILE:-unconfined}
+    # env_file injects DB_PASSWORD / ADMIN_TOKEN / MINIO_* into the container;
+    # refuse empty or repository-published values before anything starts.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        for k in DB_PASSWORD ADMIN_TOKEN MINIO_ACCESS_KEY MINIO_SECRET_KEY; do
+          eval "v=\$$k"
+          case "$$v" in
+            ""|changeme|change-me|CHANGE-ME|default|secret|password|postgres|vexa-internal-secret|lite-internal-secret|vexa-access-key|vexa-secret-key)
+              echo "refusing to start: $$k is unset or a value published in the Vexa repository." >&2
+              echo "  Populate ${SECRETS_FILE:-/opt/vexa/stack.secrets.env} with sh deploy/portainer/init-host.sh, then re-deploy." >&2
+              exit 1;;
+          esac
+        done
+        export ADMIN_API_TOKEN="$$ADMIN_TOKEN"
+        exec /entrypoint.sh "$$@"
     shm_size: 2g
-    environment: *vexa-env
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: ${DB_NAME:-vexa}
+      DB_USER: ${DB_USER:-postgres}
+      MINIO_ENDPOINT: storage:9000
+      MINIO_BUCKET: ${MINIO_BUCKET:-vexa}
+      MINIO_SECURE: "false"
+      TRANSCRIPTION_SERVICE_URL: ${TRANSCRIPTION_SERVICE_URL:-}
+      TRANSCRIPTION_SERVICE_TOKEN: ${TRANSCRIPTION_SERVICE_TOKEN:-}
+      TRANSCRIPTION_MODEL: ${TRANSCRIPTION_MODEL:-}
+      TRANSCRIBE_ENABLED: ${TRANSCRIBE_ENABLED:-}
+      RECORDING_ENABLED: ${RECORDING_ENABLED:-}
+      VEXA_PUBLIC_API_URL: ${VEXA_PUBLIC_API_URL:-http://localhost:8056}
+      TERMINAL_PUBLIC_URL: ${TERMINAL_PUBLIC_URL:-http://localhost:3001}
+      TZ: UTC
     ports:
       - "${BIND_ADDR:-0.0.0.0}:${GATEWAY_HOST_PORT:-8056}:8056"
       - "${BIND_ADDR:-0.0.0.0}:${TERMINAL_HOST_PORT:-3001}:3001"
       - "${BIND_ADDR:-0.0.0.0}:${AGENT_HOST_PORT:-8100}:8100"
     volumes:
-      # Persisted minted secrets (terminal sign-in link secret, self-host key).
-      # Valkey state and /workspaces are ephemeral inside the container by design.
+      # Minted secrets that must survive container replacement (terminal
+      # sign-in link secret, self-host API key).
       - vexa-state:/var/lib/vexa/state
     networks: [vexa]
     restart: unless-stopped
     mem_limit: ${LITE_MEM_LIMIT:-2g}
-    healthcheck:
-      test: ["CMD-SHELL", "supervisorctl status gateway >/dev/null 2>&1"]
-      interval: 15s
-      timeout: 10s
-      retries: 5
-      start_period: 120s
     depends_on:
       postgres:
         condition: service_healthy
@@ -79,14 +87,26 @@ services:
         condition: service_completed_successfully
 
   postgres:
+    <<: *secrets
     image: postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        case "$$DB_PASSWORD" in
+          ""|changeme|change-me|CHANGE-ME|default|secret|password|postgres|vexa-internal-secret)
+            echo "refusing to start: DB_PASSWORD is unset or a value published in the Vexa repository." >&2
+            echo "  Populate ${SECRETS_FILE:-/opt/vexa/stack.secrets.env} with sh deploy/portainer/init-host.sh." >&2
+            exit 1;;
+        esac
+        POSTGRES_PASSWORD="$$DB_PASSWORD" exec docker-entrypoint.sh postgres "$$@"
+      - --
+    command: ["postgres", "-c", "idle_in_transaction_session_timeout=60000"]
     environment:
       POSTGRES_DB: ${DB_NAME:-vexa}
       POSTGRES_USER: ${DB_USER:-postgres}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
       TZ: UTC
       PGTZ: UTC
-    command: ["postgres", "-c", "idle_in_transaction_session_timeout=60000"]
     volumes:
       - vexa-pgdata:/var/lib/postgresql/data
     networks: [vexa]
@@ -98,22 +118,27 @@ services:
       retries: 5
 
   storage:
-    # Recordings as plain files in the volume: back it up with an attribute-
-    # preserving copy (rsync -aX, cp -a) — S3 metadata rides in xattrs.
+    <<: *secrets
+    # Recordings as plain files in the volume: back the volume up with an
+    # attribute-preserving copy (rsync -aX, cp -a) — S3 metadata rides in xattrs.
     image: versity/versitygw:v1.10.0@sha256:89cad13cc981986ee284cbafea4613f9533ce6fd5f37a2c96c4c4fb8adb3a316
-    command:
-      - --port
-      - :9000
-      - --health
-      - /health
-      - --iam-dir
-      - /srv/vexa-storage/iam
-      - --quiet
-      - posix
-      - /srv/vexa-storage/data
-    environment:
-      ROOT_ACCESS_KEY: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required}
-      ROOT_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        case "$$MINIO_ACCESS_KEY" in
+          ""|vexa-access-key|vexa-secret-key|minioadmin|changeme|default|secret|password)
+            echo "refusing to start: MINIO_ACCESS_KEY is unset or a value published in the Vexa repository." >&2
+            exit 1;;
+        esac
+        case "$$MINIO_SECRET_KEY" in
+          ""|vexa-access-key|vexa-secret-key|minioadmin|changeme|default|secret|password)
+            echo "refusing to start: MINIO_SECRET_KEY is unset or a value published in the Vexa repository." >&2
+            exit 1;;
+        esac
+        mkdir -p /srv/vexa-storage/data /srv/vexa-storage/iam
+        ROOT_ACCESS_KEY="$$MINIO_ACCESS_KEY" ROOT_SECRET_KEY="$$MINIO_SECRET_KEY" \
+          exec versitygw --port :9000 --health /health --iam-dir /srv/vexa-storage/iam --quiet posix /srv/vexa-storage/data
     volumes:
       - vexa-storagedata:/srv/vexa-storage
     networks: [vexa]
@@ -124,28 +149,28 @@ services:
       timeout: 5s
       retries: 5
 
-  # The bucket has to exist before meeting-api writes to it. versitygw's own
-  # admin CLI does it in one shot, on the same volume.
+  # The bucket must exist before meeting-api writes to it; versitygw's own admin
+  # CLI does it once against the running gateway.
   storage-init:
+    <<: *secrets
     image: versity/versitygw:v1.10.0@sha256:89cad13cc981986ee284cbafea4613f9533ce6fd5f37a2c96c4c4fb8adb3a316
-    entrypoint: ["/bin/sh", "-c"]
-    command:
+    entrypoint:
+      - /bin/sh
+      - -c
       - |
-        versitygw admin --endpoint-url http://storage:9000 \
-          create-bucket --bucket ${MINIO_BUCKET:-vexa} --owner "$$ADMIN_ACCESS_KEY" \
-          || echo "bucket ${MINIO_BUCKET:-vexa} already present or create failed"
-    environment:
-      ADMIN_ACCESS_KEY: ${MINIO_ACCESS_KEY}
-      ADMIN_SECRET_KEY: ${MINIO_SECRET_KEY}
+        ADMIN_ACCESS_KEY="$$MINIO_ACCESS_KEY" ADMIN_SECRET_KEY="$$MINIO_SECRET_KEY" \
+          versitygw admin --endpoint-url http://storage:9000 \
+          create-bucket --bucket ${MINIO_BUCKET:-vexa} --owner "$$MINIO_ACCESS_KEY" \
+          || echo "bucket ${MINIO_BUCKET:-vexa} already present"
     networks: [vexa]
     restart: "no"
     depends_on:
       storage:
         condition: service_healthy
 
-  # Optional CPU Whisper for smoke tests only: tiny.en is English-only, so a
-  # Polish meeting needs a real endpoint in TRANSCRIPTION_SERVICE_URL instead.
-  # Enable with COMPOSE_PROFILES=local-stt (or the Portainer stack env).
+  # Optional CPU Whisper for smoke tests only: the default model is English-only,
+  # so Polish meetings need a real endpoint in TRANSCRIPTION_SERVICE_URL.
+  # Enable with COMPOSE_PROFILES=local-stt in the Portainer stack env.
   whisper:
     image: fedirz/faster-whisper-server:latest-cpu@sha256:760e5e43d427dc6cfbbc4731934b908b7de9c7e6d5309c6a1f0c8c923a5b6030
     profiles: [local-stt]
