@@ -5,8 +5,11 @@
 # meeting bots as in-container processes, so this stack needs no Docker socket
 # and builds nothing — images come from Docker Hub.
 #
-# Secrets live in ONE host file, SECRETS_FILE (default
-# /opt/vexa/stack.secrets.env), created by `sh deploy/portainer/init-host.sh`.
+# Secrets live in ONE file under /data/vexa (SECRETS_FILE, default
+# /data/vexa/stack.secrets.env), created by `sh deploy/portainer/init-host.sh`.
+# /data is Portainer's data directory and is mounted into the Portainer
+# container, so the compose CLI it runs can read the env_file; the same path
+# exists on the host, which is what the daemon needs for the seccomp profile.
 # Nothing secret is committed and nothing secret is kept in Portainer's
 # database: a git re-scan overwrites the stack's project directory, so a
 # committed secret would be both published and destroyed on the next update.
@@ -17,7 +20,7 @@ name: vexa
 
 x-secrets: &secrets
   env_file:
-    - ${SECRETS_FILE:-/opt/vexa/stack.secrets.env}
+    - ${SECRETS_FILE:-/data/vexa/stack.secrets.env}
 
 services:
   vexa-lite:
@@ -44,7 +47,7 @@ services:
           case "$$v" in
             ""|changeme|change-me|CHANGE-ME|default|secret|password|postgres|vexa-internal-secret|lite-internal-secret|vexa-access-key|vexa-secret-key)
               echo "refusing to start: $$k is unset or a value published in the Vexa repository." >&2
-              echo "  Populate ${SECRETS_FILE:-/opt/vexa/stack.secrets.env} with sh deploy/portainer/init-host.sh, then re-deploy." >&2
+              echo "  Populate ${SECRETS_FILE:-/data/vexa/stack.secrets.env} with sh deploy/portainer/init-host.sh, then re-deploy." >&2
               exit 1;;
           esac
         done
@@ -96,7 +99,7 @@ services:
         case "$$DB_PASSWORD" in
           ""|changeme|change-me|CHANGE-ME|default|secret|password|postgres|vexa-internal-secret)
             echo "refusing to start: DB_PASSWORD is unset or a value published in the Vexa repository." >&2
-            echo "  Populate ${SECRETS_FILE:-/opt/vexa/stack.secrets.env} with sh deploy/portainer/init-host.sh." >&2
+            echo "  Populate ${SECRETS_FILE:-/data/vexa/stack.secrets.env} with sh deploy/portainer/init-host.sh." >&2
             exit 1;;
         esac
         POSTGRES_PASSWORD="$$DB_PASSWORD" exec docker-entrypoint.sh postgres "$$@"

@@ -26,8 +26,8 @@ Fork z linkiem do upstream: synchronizacja „Sync fork” na GitHubie albo
 ## Uruchomienie
 
 1. Na hoście (raz): `sh deploy/portainer/init-host.sh`
-   — tworzy `/opt/vexa/stack.secrets.env` (0600, wygenerowane hasła) i
-   `/opt/vexa/seccomp-userns.json`.
+   — tworzy `/data/vexa/stack.secrets.env` (0600, wygenerowane hasła) i
+   `/data/vexa/seccomp-userns.json`.
 2. W Portainerze: Environments → Stacks → Deploy a new stack → Repository:
    - Repository: `https://github.com/marcinkuk/vexa.git`
    - Reference: `refs/heads/main` (albo tag, np. `v0.12.29`)

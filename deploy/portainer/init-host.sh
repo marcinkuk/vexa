@@ -4,7 +4,7 @@
 # Idempotent: existing secrets are kept, missing ones are minted.
 set -e
 
-DIR=${VEXA_HOST_DIR:-/opt/vexa}
+DIR=${VEXA_HOST_DIR:-/data/vexa}
 SECRETS=$DIR/stack.secrets.env
 PROFILE=$DIR/seccomp-userns.json
 
