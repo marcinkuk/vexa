@@ -1,0 +1,41 @@
+# Reference Caddy site block for the Vexa stack (validated against v0.12.29).
+#
+# Only the terminal needs publishing: it serves the UI, proxies /api/* to the gateway,
+# and relays /ws. 8056/8100 stay internal — Odoo/oc8/OpenHands call 192.168.1.134:8056
+# on the LAN. Caddy gets its certificate from the hostname, so DNS must point at the
+# machine running Caddy before it starts.
+#
+# WHY THE GATE EXISTS. v0.12 Lite bakes a self-host API key into the terminal's
+# environment (provision-key.sh), and the terminal's API proxy forwards that key when a
+# request carries no session cookie. Without a gate, an anonymous visitor to
+# /api/bots or /api/meetings is acting as the deployment key holder. The gate below
+# makes /api/* require a validated session (tested: anonymous -> 401
+# {"authenticated":false}); /api/auth/* stays open so login and the OAuth callback work.
+vexa.aero-gserent.com {
+# Login + OAuth callback: reachable without a session.
+handle /api/auth/* {
+reverse_proxy 192.168.1.134:3001
+}
+
+# REST API: validated session required (forward_auth -> /api/auth/me, 401 when anonymous).
+# forward_auth is deliberately NOT applied to /ws: it breaks the upgrade handshake.
+handle /api/* {
+forward_auth 192.168.1.134:3001 {
+uri /api/auth/me
+}
+reverse_proxy 192.168.1.134:3001
+}
+
+# Socket relay: session cookie required (cheap matcher, not a validation).
+@anon_socket not header Cookie *vexa-token*
+handle /ws {
+respond @anon_socket 401
+reverse_proxy 192.168.1.134:3001
+}
+
+# The UI itself.
+reverse_proxy 192.168.1.134:3001
+}
+
+# Note: Lite keeps zero-login mode (VEXA_API_KEY baked), so the UI needs no login.
+# With real OAuth configured, each user gets their own token in the vexa-token cookie.
