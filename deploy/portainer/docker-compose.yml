@@ -55,7 +55,7 @@ services:
           esac
         done
         export ADMIN_API_TOKEN="$$ADMIN_TOKEN"
-        exec /entrypoint.sh "$$@"
+        exec /entrypoint.sh "$$0" "$$@"
       - supervisord
       - -n
       - -c
